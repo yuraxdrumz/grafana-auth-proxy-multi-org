@@ -183,6 +183,19 @@ shellcheck: $(SH_FILES) ## Run checks for shell scripts.
 TAG_SUFFIX=$(if $(WIRE_TAGS)!=oss,-$(WIRE_TAGS))
 PLATFORM=linux/amd64
 
+build-docker-full-arm: ## Build Docker image for development.
+	@echo "build docker container"
+	tar -ch . | \
+	docker buildx build - \
+	--platform linux/arm64 \
+	--build-arg BINGO=false \
+	--build-arg GO_BUILD_TAGS=$(GO_BUILD_TAGS) \
+	--build-arg WIRE_TAGS=$(WIRE_TAGS) \
+	--build-arg COMMIT_SHA=$$(git rev-parse --short HEAD) \
+	--build-arg BUILD_BRANCH=$$(git rev-parse --abbrev-ref HEAD) \
+	--tag grafana/grafana$(TAG_SUFFIX)-arm:dev \
+	$(DOCKER_BUILD_ARGS)
+
 build-docker-full: ## Build Docker image for development.
 	@echo "build docker container"
 	tar -ch . | \

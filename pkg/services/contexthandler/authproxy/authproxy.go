@@ -10,6 +10,7 @@ import (
 	"net/mail"
 	"path"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +35,7 @@ const (
 )
 
 // supportedHeaders states the supported headers configuration fields
-var supportedHeaderFields = []string{"Name", "Email", "Login", "Groups", "Role"}
+var supportedHeaderFields = []string{"Name", "Email", "Login", "Groups", "Role", "Orgs"}
 
 // AuthProxy struct
 type AuthProxy struct {
@@ -43,8 +44,8 @@ type AuthProxy struct {
 	loginService login.Service
 	sqlStore     db.DB
 	userService  user.Service
+	orgID       int64
 	ldapService  service.LDAP
-
 	logger log.Logger
 }
 
@@ -273,6 +274,7 @@ func (auth *AuthProxy) loginViaHeader(reqCtx *contextmodel.ReqContext) (int64, e
 	}
 
 	auth.headersIterator(reqCtx, func(field string, header string) {
+		auth.logger.Info(fmt.Sprintf("received header %s for field %s", header, field), reqCtx)
 		switch field {
 		case "Groups":
 			extUser.Groups = util.SplitString(header)
@@ -289,11 +291,38 @@ func (auth *AuthProxy) loginViaHeader(reqCtx *contextmodel.ReqContext) (int64, e
 					extUser.OrgRoles[orgID] = rt
 				}
 			}
+		case "Orgs":
+			var err error
+			var orgID int64
+			var organizations = util.SplitString(header)
+
+			extUser.OrgRoles = map[int64]org.RoleType{}
+
+			for i := 0; i < len(organizations); i++ {
+				auth.logger.Info(fmt.Sprintf("trying to set organization=%s from header", organizations[i]), reqCtx)
+				var organization = organizations[i]
+				var splitOrganization = regexp.MustCompile("[:]+").Split(organization, -1)
+				orgID, err = strconv.ParseInt(splitOrganization[0], 10, 64)
+
+				if err == nil {
+					if len(splitOrganization) == 1 || !org.RoleType.IsValid(org.RoleType(splitOrganization[1])) {
+						extUser.OrgRoles[orgID] = org.RoleViewer
+					} else {
+						extUser.OrgRoles[orgID] = org.RoleType(splitOrganization[1])
+					}
+
+					// Assign the first organization id as the primary organization to which this user should belong
+					if auth.orgID == 0 {
+						auth.orgID = orgID
+					}
+				}
+			}
 		default:
 			reflect.ValueOf(extUser).Elem().FieldByName(field).SetString(header)
 		}
 	})
 
+	auth.logger.Info(fmt.Sprintf("upserting external user=%+v", extUser), reqCtx)
 	upsert := &login.UpsertUserCommand{
 		ReqContext:    reqCtx,
 		SignupAllowed: auth.cfg.AuthProxyAutoSignUp,
